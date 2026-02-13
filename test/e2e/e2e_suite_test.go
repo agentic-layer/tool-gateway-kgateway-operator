@@ -21,12 +21,35 @@ import (
 	"os"
 	"os/exec"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/agentic-layer/tool-gateway-kgateway/test/utils"
 )
+
+// operatorName is the name of the operator being tested
+const operatorName = "tool-gateway-kgateway"
+
+// namespace where the project is deployed in
+const namespace = "tool-gateway-kgateway-system"
+
+// namespace where the agent-runtime is deployed in
+const agentRuntimeNamespace = "agent-runtime-operator-system"
+
+// agentRuntimeWebhookServiceName is the name of the webhook service
+const agentRuntimeWebhookServiceName = "agent-runtime-operator-webhook-service"
+
+// agentRuntimeWebhookMutatingConfiguration is the name of the mutating webhook configuration
+const agentRuntimeWebhookMutatingConfiguration = "agent-runtime-operator-mutating-webhook-configuration"
+
+// agentRuntimeWebhookValidatingConfiguration is the name of the validating webhook configuration
+const agentRuntimeWebhookValidatingConfiguration = "agent-runtime-operator-validating-webhook-configuration"
+
+// agentRuntimeInstallUrl is the URL to install the Agent Runtime Operator
+const agentRuntimeInstallUrl = "https://github.com/agentic-layer/agent-runtime-operator/releases/" +
+	"download/v0.13.0/install.yaml"
 
 var (
 	// Optional Environment Variables:
@@ -54,12 +77,9 @@ func TestE2E(t *testing.T) {
 
 var _ = BeforeSuite(func() {
 	By("building the manager(Operator) image")
-	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
-	_, err := utils.Run(cmd)
+	_, err := utils.Run(exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage)))
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager(Operator) image")
 
-	// TODO(user): If you want to change the e2e test vendor from Kind, ensure the image is
-	// built and available before running the tests. Also, remove the following block.
 	By("loading the manager(Operator) image on Kind")
 	err = utils.LoadImageToKindClusterWithName(projectImage)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager(Operator) image into Kind")
@@ -78,12 +98,127 @@ var _ = BeforeSuite(func() {
 			_, _ = fmt.Fprintf(GinkgoWriter, "WARNING: CertManager is already installed. Skipping installation...\n")
 		}
 	}
+
+	// Deploy the Agent Runtime Operator which is a dependency for this operator
+	By("deploying the agent runtime")
+	_, err = utils.Run(exec.Command("kubectl", "apply", "-f", agentRuntimeInstallUrl))
+	Expect(err).NotTo(HaveOccurred(), "Failed to deploy the agent runtime")
+
+	By("waiting for agent-runtime-operator-controller-manager to be ready")
+	err = utils.VerifyDeploymentReady(
+		"agent-runtime-operator-controller-manager", agentRuntimeNamespace, 3*time.Minute)
+	Expect(err).NotTo(HaveOccurred(), "agent-runtime-operator-controller-manager should be ready")
+
+	// Deploy the operator
+	By("creating manager namespace")
+	_, err = utils.Run(exec.Command("kubectl", "create", "ns", namespace))
+	Expect(err).NotTo(HaveOccurred(), "Failed to create namespace")
+
+	By("labeling the namespace to enforce the restricted security policy")
+	_, err = utils.Run(exec.Command("kubectl", "label", "--overwrite", "ns", namespace,
+		"pod-security.kubernetes.io/enforce=restricted"))
+	Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
+
+	By("installing CRDs")
+	_, err = utils.Run(exec.Command("make", "install"))
+	Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
+
+	By("deploying the controller-manager")
+	_, err = utils.Run(exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage)))
+	Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+
+	waitForWebhook(agentRuntimeNamespace, agentRuntimeWebhookServiceName)
+	waitForWebhookCaBundleMutating(agentRuntimeWebhookMutatingConfiguration)
+	waitForWebhookCaBundleValidating(agentRuntimeWebhookValidatingConfiguration)
 })
 
 var _ = AfterSuite(func() {
-	// Teardown CertManager after the suite if not skipped and if it was not already installed
-	if !skipCertManagerInstall && !isCertManagerAlreadyInstalled {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Uninstalling CertManager...\n")
-		utils.UninstallCertManager()
-	}
+	By("undeploying the controller-manager")
+	_, _ = utils.Run(exec.Command("make", "undeploy"))
+
+	By("uninstalling CRDs")
+	_, _ = utils.Run(exec.Command("make", "uninstall"))
+
+	By("removing manager namespace")
+	_, _ = utils.Run(exec.Command("kubectl", "delete", "ns", namespace))
+
+	// Note: Not tearing down CertManager for potential reuse during local testing
 })
+
+// waitForWebhook is a helper function that waits for webhook service to be ready
+func waitForWebhook(namespace string, webhookServiceName string) {
+	By("waiting for webhook deployment to be ready")
+	Eventually(func(g Gomega) {
+		// Check that the webhook deployment is ready
+		output, err := utils.Run(exec.Command("kubectl", "get", "deployment",
+			"-l", "control-plane=controller-manager", "-n", namespace,
+			"-o", "jsonpath={.items[0].status.readyReplicas}"))
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(output).To(Equal("1"), "Controller manager should have 1 ready replica")
+	}, 3*time.Minute, 5*time.Second).Should(Succeed())
+
+	By("waiting for webhook service to be ready")
+	Eventually(func(g Gomega) {
+		// Check that the webhook service exists and has endpoints
+		_, err := utils.Run(exec.Command("kubectl", "get", "service",
+			webhookServiceName, "-n", namespace))
+		g.Expect(err).NotTo(HaveOccurred())
+
+		// Check that the webhook service has endpoints (meaning pods are ready)
+		output, err := utils.Run(exec.Command("kubectl", "get", "endpoints", webhookServiceName,
+			"-n", namespace, "-o", "jsonpath={.subsets[*].addresses[*].ip}"))
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(output).NotTo(BeEmpty(), "Webhook service should have endpoints")
+	}).Should(Succeed())
+
+	By("verifying that the certificate secret has been created")
+	Eventually(func(g Gomega) {
+		_, err := utils.Run(exec.Command("kubectl", "get", "secrets", "webhook-server-cert", "-n", namespace))
+		g.Expect(err).NotTo(HaveOccurred())
+	}).Should(Succeed())
+}
+
+func waitForWebhookCaBundle(kind string, name string) {
+	Eventually(func(g Gomega) {
+		mwhOutput, err := utils.Run(exec.Command("kubectl", "get",
+			kind,
+			name,
+			"-o", "go-template={{ range .webhooks }}{{ .clientConfig.caBundle }}{{ end }}"))
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(len(mwhOutput)).To(BeNumerically(">", 10))
+	}).Should(Succeed())
+}
+
+func waitForWebhookCaBundleMutating(name string) {
+	waitForWebhookCaBundle(
+		"mutatingwebhookconfigurations.admissionregistration.k8s.io",
+		name,
+	)
+}
+func waitForWebhookCaBundleValidating(name string) {
+	waitForWebhookCaBundle(
+		"validatingwebhookconfigurations.admissionregistration.k8s.io",
+		name,
+	)
+}
+
+func fetchKubernetesEvents() {
+	By("Fetching Kubernetes events")
+	eventsOutput, err := utils.Run(exec.Command("kubectl", "get", "events", "-n", namespace, "--sort-by=.lastTimestamp"))
+	if err == nil {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Kubernetes events:\n%s", eventsOutput)
+	} else {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Kubernetes events: %s", err)
+	}
+}
+
+func fetchControllerManagerPodLogs() {
+	By("Fetching controller manager pod logs")
+	controllerLogs, err := utils.Run(exec.Command("kubectl", "logs",
+		"-l", "app.kubernetes.io/name="+operatorName, "-n", namespace))
+	if err == nil {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", controllerLogs)
+	} else {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Controller logs: %s", err)
+	}
+}
