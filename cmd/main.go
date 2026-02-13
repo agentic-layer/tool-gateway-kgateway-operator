@@ -39,7 +39,7 @@ import (
 
 	agentruntimev1alpha1 "github.com/agentic-layer/agent-runtime-operator/api/v1alpha1"
 
-	"github.com/agentic-layer/tool-gateway-kgateway-operator/internal/controller"
+	"github.com/agentic-layer/tool-gateway-kgateway/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 

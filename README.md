@@ -37,7 +37,7 @@ kind create cluster
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.19.1/cert-manager.yaml
 
 # Install the Tool Gateway operator
-kubectl apply -f https://github.com/agentic-layer/tool-gateway-kgateway-operator/releases/latest/download/install.yaml
+kubectl apply -f https://github.com/agentic-layer/tool-gateway-kgateway/releases/latest/download/install.yaml
 ```
 
 ## Development
@@ -56,10 +56,10 @@ make kind-load
 make deploy
 ```
 
-After a successful start, you should see the controller manager pod running in the `tool-gateway-kgateway-operator-system` namespace.
+After a successful start, you should see the controller manager pod running in the `tool-gateway-kgateway-system` namespace.
 
 ```bash
-kubectl get pods -n tool-gateway-kgateway-operator-system
+kubectl get pods -n tool-gateway-kgateway-system
 ```
 
 ## Configuration
@@ -103,7 +103,7 @@ make setup-test-e2e
 ```
 ```bash
 # Run E2E tests against the existing cluster
-KIND_CLUSTER=tool-gateway-kgateway-operator-test-e2e go test ./test/e2e/ -v -ginkgo.v
+KIND_CLUSTER=tool-gateway-kgateway-test-e2e go test ./test/e2e/ -v -ginkgo.v
 ```
 ```bash
 # Clean up test cluster when done
@@ -145,4 +145,4 @@ The project includes sample manifests to help you get started.
 
 ## Contribution
 
-See [Contribution Guide](https://github.com/agentic-layer/tool-gateway-kgateway-operator?tab=contributing-ov-file) for details on contribution, and the process for submitting pull requests.
+See [Contribution Guide](https://github.com/agentic-layer/tool-gateway-kgateway?tab=contributing-ov-file) for details on contribution, and the process for submitting pull requests.

@@ -27,20 +27,20 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/agentic-layer/tool-gateway-kgateway-operator/test/utils"
+	"github.com/agentic-layer/tool-gateway-kgateway/test/utils"
 )
 
 // namespace where the project is deployed in
-const namespace = "tool-gateway-kgateway-operator-system"
+const namespace = "tool-gateway-kgateway-system"
 
 // serviceAccountName created for the project
-const serviceAccountName = "tool-gateway-kgateway-operator-controller-manager"
+const serviceAccountName = "tool-gateway-kgateway-controller-manager"
 
 // metricsServiceName is the name of the metrics service of the project
-const metricsServiceName = "tool-gateway-kgateway-operator-controller-manager-metrics-service"
+const metricsServiceName = "tool-gateway-kgateway-controller-manager-metrics-service"
 
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
-const metricsRoleBindingName = "tool-gateway-kgateway-operator-metrics-binding"
+const metricsRoleBindingName = "tool-gateway-kgateway-metrics-binding"
 
 var _ = Describe("Manager", Ordered, func() {
 	var controllerPodName string
@@ -173,7 +173,7 @@ var _ = Describe("Manager", Ordered, func() {
 		It("should ensure the metrics endpoint is serving metrics", func() {
 			By("creating a ClusterRoleBinding for the service account to allow access to metrics")
 			cmd := exec.Command("kubectl", "create", "clusterrolebinding", metricsRoleBindingName,
-				"--clusterrole=tool-gateway-kgateway-operator-metrics-reader",
+				"--clusterrole=tool-gateway-kgateway-metrics-reader",
 				fmt.Sprintf("--serviceaccount=%s:%s", namespace, serviceAccountName),
 			)
 			_, err := utils.Run(cmd)

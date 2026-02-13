@@ -1,4 +1,4 @@
-module github.com/agentic-layer/tool-gateway-kgateway-operator
+module github.com/agentic-layer/tool-gateway-kgateway
 
 go 1.24.0
 
