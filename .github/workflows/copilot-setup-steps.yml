@@ -29,5 +29,7 @@ jobs:
           chmod +x ./kind
           sudo mv ./kind /usr/local/bin/kind
 
-      - name: Spin up kind cluster
-        run: make setup-test-e2e
+      - name: Warmup e2e tests
+        run: |
+          go mod tidy
+          make test-e2e
